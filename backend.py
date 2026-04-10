@@ -167,7 +167,7 @@ def normalize_url(url: str) -> str:
 def normalize_risk(prob: float) -> str:
     """
     Convert probability score to risk category.
-    Thresholds are tuned for balanced detection.
+    Thresholds tuned for phishing detection sensitivity.
     
     Args:
         prob: Probability score (0-1) from ML model
@@ -175,11 +175,12 @@ def normalize_risk(prob: float) -> str:
     Returns:
         str: 'safe', 'suspicious', or 'dangerous'
     """
-    if prob >= 0.75:      # High confidence phishing
+    # More aggressive thresholds for better phishing detection
+    if prob >= 0.55:      # 55%+ confidence = dangerous
         return "dangerous"
-    elif prob >= 0.40:    # Medium confidence - needs verification
+    elif prob >= 0.30:    # 30-55% = suspicious
         return "suspicious"
-    return "safe"          # Low confidence - likely legitimate
+    return "safe"          # Below 30% = safe
 
 
 def normalize_action(risk: str) -> str:
