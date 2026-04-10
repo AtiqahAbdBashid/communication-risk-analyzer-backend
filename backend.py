@@ -116,13 +116,10 @@ def normalize_risk(prob: float) -> str:
     Convert probability score to risk category.
     BALANCED THRESHOLDS - Only clear phishing is dangerous.
     """
-    # Clear phishing (85%+ confidence) - account locked, lottery wins, etc.
     if prob >= 0.85:
         return "dangerous"
-    # Suspicious (50-85%) - unknown numbers, generic alerts, pressure tactics
     elif prob >= 0.50:
         return "suspicious"
-    # Safe (below 50%) - normal conversations, educational content
     return "safe"
 
 
@@ -144,13 +141,41 @@ def clean_email_text(text: str) -> str:
     return text
 
 
+def extract_url_from_text(text: str) -> str | None:
+    """
+    Extract the first URL found in a text string.
+    Returns None if no URL is found.
+    """
+    # Pattern to match URLs
+    url_pattern = r'https?://[^\s]+|www\.[^\s]+|[a-zA-Z0-9][a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:/\S*)?'
+    
+    match = re.search(url_pattern, text, re.IGNORECASE)
+    
+    if match:
+        url = match.group(0)
+        # Add https:// if missing
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+        return url
+    
+    return None
+
+
 def detect_input_type(user_input: str, mode: str) -> str:
     if mode in {"email", "url"}:
         return mode
 
     text = user_input.strip().lower()
+    
+    # Check if there's a URL inside the text
+    extracted_url = extract_url_from_text(user_input)
+    if extracted_url:
+        return "url"
+    
+    # Original URL detection (whole input is URL)
     if text.startswith("http://") or text.startswith("https://") or ("." in text and " " not in text):
         return "url"
+    
     return "email"
 
 
@@ -260,6 +285,72 @@ def is_clearly_legitimate(text: str) -> tuple[bool, str]:
     return (False, "")
 
 
+def calculate_risk_score(text: str) -> tuple[int, list[str]]:
+    """
+    Calculate risk score based on multiple factors.
+    Returns (score, reasons)
+    """
+    text_lower = text.lower()
+    score = 0
+    reasons = []
+    
+    # High-risk keywords (adds 20-30 points each)
+    high_risk = {
+        "account suspended": 25,
+        "account locked": 25,
+        "click here": 20,
+        "verify your account": 25,
+        "won $": 30,
+        "bank details": 30,
+        "send money": 25,
+        "call immediately": 20,
+        "free iphone": 30,
+        "congratulations you won": 30,
+    }
+    
+    for keyword, points in high_risk.items():
+        if keyword in text_lower:
+            score += points
+            reasons.append(f"Found '{keyword}' (+{points})")
+    
+    # Medium-risk keywords (adds 5-15 points)
+    medium_risk = {
+        "urgent": 10,
+        "verify": 10,
+        "account": 5,
+        "suspended": 15,
+        "locked": 15,
+        "confirm": 10,
+        "payment": 10,
+        "click": 8,
+        "login": 8,
+        "password": 10,
+    }
+    
+    for keyword, points in medium_risk.items():
+        if keyword in text_lower:
+            score += points
+            reasons.append(f"Found '{keyword}' (+{points})")
+    
+    # URL detection (adds points)
+    if extract_url_from_text(text):
+        score += 20
+        reasons.append("Contains URL (+20)")
+    
+    # Shortened URL detection
+    if "bit.ly" in text_lower or "tinyurl" in text_lower:
+        score += 15
+        reasons.append("Contains shortened URL (+15)")
+    
+    # Phone number detection
+    phone_pattern = r'call \d{3}[-.]?\d{3}[-.]?\d{4}'
+    if re.search(phone_pattern, text_lower):
+        score += 15
+        reasons.append("Contains phone number (+15)")
+    
+    return min(score, 100), reasons
+
+
 def has_dangerous_keywords(text: str) -> tuple[bool, list[str]]:
     """
     Check for EXTREMELY dangerous keywords that indicate confirmed scams.
@@ -270,8 +361,13 @@ def has_dangerous_keywords(text: str) -> tuple[bool, list[str]]:
         (["won", "$", "bank details"], "Prize scam requesting bank information"),
         (["send", "bank details", "money"], "Direct request for bank details"),
         (["account suspended", "click here", "verify"], "Account suspension phishing link"),
+        (["account locked", "click here", "verify"], "Account lock phishing link"),
+        (["account", "click", "verify"], "Account verification phishing"),
         (["free", "iphone", "click"], "Free product phishing scam"),
+        (["free", "iphone", "bit.ly"], "Free iPhone scam with shortened URL"),
         (["lottery", "winner", "claim", "fee"], "Lottery fee scam"),
+        (["call", "account", "verify"], "Phone verification scam"),
+        (["call", "809"], "Suspicious phone number scam"),
         (["social security", "verify"], "Identity theft attempt"),
         (["western union", "money gram"], "Wire transfer scam"),
         (["irs", "tax", "refund"], "Tax refund scam"),
@@ -428,7 +524,22 @@ def analyze_email(user_input: str):
             "action": "ignore",
         }
     
-    # SECOND: Check for dangerous scam patterns
+    # SECOND: Calculate risk score
+    risk_score, score_reasons = calculate_risk_score(user_input)
+    
+    # If risk score is high enough, return dangerous directly
+    if risk_score >= 60:
+        return {
+            "risk": "dangerous",
+            "type": "phishing",
+            "confidence": risk_score / 100,
+            "model_used": "Risk Score Analysis",
+            "input_type": "email",
+            "explanation": score_reasons + ["🚨 High risk score - potential scam detected"],
+            "action": "report",
+        }
+    
+    # THIRD: Check for dangerous scam patterns
     is_dangerous, dangerous_patterns = has_dangerous_keywords(user_input)
     
     if is_dangerous:
@@ -447,7 +558,7 @@ def analyze_email(user_input: str):
             "action": "report",
         }
     
-    # THIRD: ML Model
+    # FOURTH: ML Model
     try:
         clean_text = clean_email_text(user_input)
         X = email_vectorizer.transform([clean_text])
@@ -473,13 +584,11 @@ def analyze_email(user_input: str):
         
     except Exception as e:
         print(f"Email ML error: {e}")
-        suspicious_words = ["urgent", "verify", "account", "suspended", "click", "login", "password"]
-        found_words = [w for w in suspicious_words if w in user_input.lower()]
-        
-        if found_words:
+        # Use risk score as fallback if ML fails
+        if risk_score >= 50:
             risk = "suspicious"
-            prob = 0.6
-            explanation = [f"Contains suspicious words: {', '.join(found_words)}"]
+            prob = risk_score / 100
+            explanation = score_reasons
         else:
             risk = "safe"
             prob = 0.7
@@ -489,7 +598,7 @@ def analyze_email(user_input: str):
             "risk": risk,
             "type": "legitimate" if risk == "safe" else "unknown",
             "confidence": prob,
-            "model_used": "Fallback Rule-based",
+            "model_used": "Risk Score Analysis (ML Fallback)",
             "input_type": "email",
             "explanation": explanation,
             "action": normalize_action(risk),
@@ -586,9 +695,12 @@ def analyze_website(user_input: str):
 # ======================
 @app.post("/analyze")
 def analyze(data: RequestData):
+    # Detect input type (now with URL extraction)
     input_type = detect_input_type(data.input, data.mode)
-
-    if input_type == "email":
-        return analyze_email(data.input)
-
-    return analyze_website(data.input)
+    
+    # If it's a URL type, extract the actual URL for analysis
+    if input_type == "url":
+        url_to_analyze = extract_url_from_text(data.input) or data.input
+        return analyze_website(url_to_analyze)
+    
+    return analyze_email(data.input)
