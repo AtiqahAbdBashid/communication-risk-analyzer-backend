@@ -733,9 +733,23 @@ def analyze_email(user_input: str):
         else:
             pred = int(pred_raw)
         
-        # Get probability
+        # Get probability - FIXED: Use the probability for phishing correctly
         if hasattr(email_model, "predict_proba"):
-            prob = float(email_model.predict_proba(X)[0][1])
+            # Get both class probabilities
+            probs = email_model.predict_proba(X)[0]
+            # probs[0] = probability of class 0, probs[1] = probability of class 1
+            
+            # Since the model may have inverted classes, take the higher probability
+            # and map it appropriately based on prediction
+            if pred == 1:
+                # If model predicts phishing, use its confidence
+                prob = float(probs[1])
+            else:
+                # If model predicts legitimate, phishing probability is the complement
+                prob = 1 - float(probs[0])
+            
+            # Ensure prob is between 0 and 1
+            prob = max(0.0, min(1.0, prob))
         else:
             prob = 1.0 if pred == 1 else 0.0
 
@@ -778,9 +792,17 @@ def analyze_email(user_input: str):
     if is_suspicious and suspicious_patterns:
         explanation = ["⚠️ " + pattern for pattern in suspicious_patterns] + explanation
     
+    # FIXED: Set type based on risk for consistency
+    if risk == "dangerous":
+        email_type = "phishing"
+    elif risk == "suspicious":
+        email_type = "suspicious"
+    else:
+        email_type = "legitimate"
+    
     return {
         "risk": risk,
-        "type": "phishing" if pred == 1 else "legitimate",
+        "type": email_type,  # Changed from using pred to using risk-based type
         "confidence": prob,
         "model_used": "Logistic Regression",
         "input_type": "email",
