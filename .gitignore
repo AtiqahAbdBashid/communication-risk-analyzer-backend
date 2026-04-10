@@ -1,0 +1,24 @@
+# Large model files (too big for GitHub)
+*.h5
+*.pb
+*.model
+
+# Python
+__pycache__/
+*.pyc
+venv/
+env/
+*.so
+
+# Environment
+.env
+.DS_Store
+
+# Logs
+*.log
+*.pid
+
+# IDE
+.vscode/
+.idea/
+*.swp
