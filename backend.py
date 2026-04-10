@@ -268,7 +268,7 @@ def is_clearly_legitimate(text: str) -> tuple[bool, str]:
     
     for pattern in education_patterns:
         if pattern in text_lower:
-            return (True, f"Educational/Professional content detected: '{pattern}'")
+            return (True, f"Educational/Professional content detected")
     
     # Transactional patterns
     transactional_patterns = [
@@ -280,7 +280,7 @@ def is_clearly_legitimate(text: str) -> tuple[bool, str]:
     
     for pattern in transactional_patterns:
         if pattern in text_lower:
-            return (True, f"Transactional message detected: '{pattern}'")
+            return (True, f"Transactional message detected")
     
     return (False, "")
 
@@ -288,65 +288,68 @@ def is_clearly_legitimate(text: str) -> tuple[bool, str]:
 def calculate_risk_score(text: str) -> tuple[int, list[str]]:
     """
     Calculate risk score based on multiple factors.
-    Returns (score, reasons)
+    Returns (score, reasons) - score used internally, reasons for display.
     """
     text_lower = text.lower()
     score = 0
     reasons = []
     
-    # High-risk keywords (adds 20-30 points each)
+    # High-risk keywords
     high_risk = {
-        "account suspended": 25,
-        "account locked": 25,
-        "click here": 20,
-        "verify your account": 25,
-        "won $": 30,
-        "bank details": 30,
-        "send money": 25,
-        "call immediately": 20,
-        "free iphone": 30,
-        "congratulations you won": 30,
+        "account suspended": "Account suspension notice",
+        "account locked": "Account locked notice",
+        "click here": "Request to click a link",
+        "verify your account": "Account verification request",
+        "won $": "Lottery or prize winning claim",
+        "bank details": "Request for bank information",
+        "send money": "Money transfer request",
+        "free iphone": "Free product offer",
+        "congratulations you won": "Prize winning claim",
     }
     
-    for keyword, points in high_risk.items():
+    for keyword, reason in high_risk.items():
         if keyword in text_lower:
-            score += points
-            reasons.append(f"Found '{keyword}' (+{points})")
+            score += 25
+            reasons.append(f"Contains '{reason}'")
     
-    # Medium-risk keywords (adds 5-15 points)
+    # Medium-risk keywords
     medium_risk = {
-        "urgent": 10,
-        "verify": 10,
-        "account": 5,
-        "suspended": 15,
-        "locked": 15,
-        "confirm": 10,
-        "payment": 10,
-        "click": 8,
-        "login": 8,
-        "password": 10,
+        "urgent": "Urgent language",
+        "verify": "Verification request",
+        "suspended": "Account suspension warning",
+        "locked": "Account locked warning",
+        "confirm": "Confirmation request",
+        "payment": "Payment-related content",
+        "click": "Clickable link",
+        "login": "Login request",
+        "password": "Password request",
     }
     
-    for keyword, points in medium_risk.items():
+    for keyword, reason in medium_risk.items():
         if keyword in text_lower:
-            score += points
-            reasons.append(f"Found '{keyword}' (+{points})")
+            score += 10
+            reasons.append(f"Contains '{reason}'")
     
-    # URL detection (adds points)
+    # Account mention
+    if "account" in text_lower:
+        score += 5
+        reasons.append("Mentions 'account'")
+    
+    # URL detection
     if extract_url_from_text(text):
         score += 20
-        reasons.append("Contains URL (+20)")
+        reasons.append("Contains a URL or link")
     
     # Shortened URL detection
     if "bit.ly" in text_lower or "tinyurl" in text_lower:
         score += 15
-        reasons.append("Contains shortened URL (+15)")
+        reasons.append("Contains shortened URL (often hides malicious destination)")
     
     # Phone number detection
     phone_pattern = r'call \d{3}[-.]?\d{3}[-.]?\d{4}'
     if re.search(phone_pattern, text_lower):
         score += 15
-        reasons.append("Contains phone number (+15)")
+        reasons.append("Contains phone number for verification")
     
     return min(score, 100), reasons
 
@@ -362,7 +365,6 @@ def has_dangerous_keywords(text: str) -> tuple[bool, list[str]]:
         (["send", "bank details", "money"], "Direct request for bank details"),
         (["account suspended", "click here", "verify"], "Account suspension phishing link"),
         (["account locked", "click here", "verify"], "Account lock phishing link"),
-        (["account", "click", "verify"], "Account verification phishing"),
         (["free", "iphone", "click"], "Free product phishing scam"),
         (["free", "iphone", "bit.ly"], "Free iPhone scam with shortened URL"),
         (["lottery", "winner", "claim", "fee"], "Lottery fee scam"),
@@ -370,8 +372,6 @@ def has_dangerous_keywords(text: str) -> tuple[bool, list[str]]:
         (["call", "809"], "Suspicious phone number scam"),
         (["social security", "verify"], "Identity theft attempt"),
         (["western union", "money gram"], "Wire transfer scam"),
-        (["irs", "tax", "refund"], "Tax refund scam"),
-        (["paypal", "limited", "access"], "PayPal account scam"),
     ]
     
     found_patterns = []
@@ -524,7 +524,7 @@ def analyze_email(user_input: str):
             "action": "ignore",
         }
     
-    # SECOND: Calculate risk score
+    # SECOND: Calculate risk score (internal use only)
     risk_score, score_reasons = calculate_risk_score(user_input)
     
     # If risk score is high enough, return dangerous directly
@@ -639,6 +639,48 @@ def analyze_email(user_input: str):
 # WEBSITE ANALYSIS FUNCTION
 # ======================
 def analyze_website(user_input: str):
+    url_lower = user_input.lower()
+    
+    # Check for shortened URLs (bit.ly, tinyurl, etc.)
+    shortened_patterns = ['bit.ly', 'tinyurl', 'short.url', 'goo.gl', 'ow.ly', 'is.gd', 'buff.ly']
+    is_shortened = any(pattern in url_lower for pattern in shortened_patterns)
+    
+    if is_shortened:
+        return {
+            "risk": "dangerous",
+            "type": "phishing",
+            "confidence": 0.95,
+            "model_used": "Shortened URL Detection",
+            "input_type": "url",
+            "explanation": [
+                "⚠️ Shortened URL detected - often used to hide malicious destinations",
+                "🚨 Combined with scam keywords, this is likely a phishing attempt"
+            ],
+            "action": "report",
+        }
+    
+    # Check for suspicious domain patterns
+    suspicious_domains = [
+        'secure-login', 'verify-account', 'confirm-identity',
+        'paypal-security', 'appleid-verify', 'microsoft-verify',
+        'account-verify', 'login-secure', 'bank-verify'
+    ]
+    has_suspicious_domain = any(pattern in url_lower for pattern in suspicious_domains)
+    
+    if has_suspicious_domain:
+        return {
+            "risk": "dangerous",
+            "type": "phishing",
+            "confidence": 0.90,
+            "model_used": "Suspicious Domain Detection",
+            "input_type": "url",
+            "explanation": [
+                f"⚠️ Domain contains suspicious pattern commonly used in phishing",
+                "🚨 This domain pattern is frequently used for credential theft"
+            ],
+            "action": "report",
+        }
+    
     # RULE 1: trusted domain
     if is_trusted_domain(user_input):
         return {
